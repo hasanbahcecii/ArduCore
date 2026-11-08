@@ -1,0 +1,27 @@
+name: Firmware build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  uno:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.5.1
+      - name: Install AVR core and Servo
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.6
+          arduino-cli lib install "Servo@1.2.2"
+      - name: Compile Arduino Uno firmware
+        run: arduino-cli compile --fqbn arduino:avr:uno --warnings all firmware/arducore

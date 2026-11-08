@@ -1,0 +1,15 @@
+# Generated firmware and local tools
+build/
+.arduino15/
+.arduinoIDE/
+.vscode/
+*.elf
+*.hex
+*.eep
+*.o
+*.a
+*.map
+*.log
+.DS_Store
+__pycache__/
+.venv/

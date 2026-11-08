@@ -2,10 +2,10 @@
 
 ## v0.6 - Baseline
 
-Preserve and import the supplied firmware, establish reproducible Uno builds,
-and document observed behavior and known defects. Documentation has been
-initialized; firmware import, automated compilation, and hardware validation
-remain pending.
+The supplied firmware is imported with ASCII-only comment normalization. Uno
+cross-compilation passed using pinned dependencies, and a GitHub Actions build
+is configured. See validation.md for evidence and limits. Hardware validation
+and native unit tests remain pending.
 
 The earlier component-by-component phase list is a set of ideas, not evidence
 of implemented or verified features.

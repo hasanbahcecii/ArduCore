@@ -20,11 +20,14 @@ The firmware combines interrupts and millis-based scheduling with synchronous
 Arduino APIs. It is not fully interrupt-driven or fully non-blocking:
 ADC reads, short microsecond delays, and serial output can block.
 
-This documentation initialization does not add or modify firmware. The supplied
-sketch has not yet been imported into this repository. Compilation and physical
-hardware behavior have not been verified in this environment. In particular,
-integrated servo operation remains unverified. Native unit tests and CI are not
-yet configured.
+The authoritative sketch is included at `firmware/arducore/arducore.ino`.
+Only non-ASCII comment decorations were converted to ASCII. Executable source
+is unchanged. Arduino Uno cross-compilation passed with Arduino CLI 1.5.1,
+Arduino AVR Core 1.8.6, and Servo 1.2.2: 6226 bytes flash, 343 bytes static RAM.
+Physical hardware behavior has not been verified in this environment;
+integrated servo operation remains unverified. Native unit tests do not yet
+exist. The GitHub Actions workflow runs the same pinned build on pushes and
+pull requests. See [baseline validation](docs/validation.md).
 
 ## Architecture
 
@@ -96,20 +99,19 @@ See [hardware](docs/hardware.md) for timer ownership and mapping caveats.
 
 ## Firmware build instructions
 
-After importing the authoritative sketch unchanged at
-`firmware/arducore/arducore.ino`, build for Arduino Uno using Arduino CLI:
+Use Arduino CLI 1.5.1 to build the included sketch for Arduino Uno:
 
 ```sh
 arduino-cli core update-index
-arduino-cli core install arduino:avr
+arduino-cli core install arduino:avr@1.8.6
 arduino-cli lib install "Servo@1.2.2"
 arduino-cli compile --fqbn arduino:avr:uno firmware/arducore
 ```
 
-Servo 1.2.2 is a proposed explicit dependency pin; compatibility has not yet
-been tested here. The commands cannot build this documentation-only checkout
-until the sketch is imported. A successful cross-build would not establish
-hardware correctness.
+The workflow at `.github/workflows/firmware-build.yml` installs the same CLI,
+core, and Servo versions. A successful cross-build does not establish hardware
+correctness. No license has been selected yet; this repository does not grant
+an open-source license.
 
 ## Known limitations
 

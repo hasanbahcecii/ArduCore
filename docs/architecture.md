@@ -2,8 +2,9 @@
 
 ## Reviewed baseline
 
-This document describes the uploaded v0.6 sketch, not a newly implemented
-architecture. The repository currently contains documentation only.
+This document describes the uploaded v0.6 sketch now included under
+firmware/arducore. Only comment decorations were converted to ASCII; executable
+source is unchanged. No new driver architecture has been implemented.
 
 setup() starts HardwareSerial at 9600 baud, configures GPIO, attaches Servo,
 enables the echo pin-change interrupt, and emits a startup banner.
