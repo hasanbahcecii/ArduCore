@@ -1,0 +1,19 @@
+name: Workflow validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate GitHub Actions syntax and context availability
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -shellcheck= -pyflakes=

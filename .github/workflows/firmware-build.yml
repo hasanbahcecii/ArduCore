@@ -45,11 +45,12 @@ jobs:
         run: tools/build_firmware.sh "${{ matrix.profile }}"
   avr-simulation:
     runs-on: ubuntu-latest
-    env:
-      ARDUCORE_SIM_RUNNER: ${{ runner.temp }}/arducore-sim
-      ARDUCORE_SIM_ELF: ${{ runner.temp }}/arducore-uno/arducore.ino.elf
     steps:
       - uses: actions/checkout@v4
+      - name: Configure simulation paths on the runner
+        run: |
+          echo "ARDUCORE_SIM_RUNNER=$RUNNER_TEMP/arducore-sim" >> "$GITHUB_ENV"
+          echo "ARDUCORE_SIM_ELF=$RUNNER_TEMP/arducore-uno/arducore.ino.elf" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
