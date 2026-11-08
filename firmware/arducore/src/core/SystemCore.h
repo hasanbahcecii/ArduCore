@@ -6,7 +6,8 @@ namespace arduc {
 enum State { IDLE, AUTO, MANUAL, ALARM, FAULT };
 class SystemCore {
  public:
-  SystemCore() : state_(AUTO), forcedAlarm_(false), fault_(false),
+  SystemCore(bool requireDistance = true, bool requireTemp = true)
+      : requireDistance_(requireDistance), requireTemp_(requireTemp), state_(AUTO), forcedAlarm_(false), fault_(false),
                  healthy_(false), healthySince_(0), boot_(0) {}
   void begin(uint32_t now, bool watchdogReset) {
     boot_ = now;
@@ -15,16 +16,18 @@ class SystemCore {
     state_ = fault_ ? FAULT : AUTO;
   }
   void update(uint32_t now, float distance, float temp, bool tempValid) {
-    const bool valid = distance > 0 && tempValid;
+    const bool distanceOK = !requireDistance_ || distance > 0;
+    const bool tempOK = !requireTemp_ || tempValid;
+    const bool valid = distanceOK && tempOK;
     if (valid && !healthy_) healthySince_ = now;
     healthy_ = valid;
     if (!valid && state_ != IDLE &&
         static_cast<uint32_t>(now - boot_) >= 1000) fault_ = true;
     if (fault_) { state_ = FAULT; return; }
-    if (state_ == AUTO && ((distance > 0 && distance < 20) ||
-                          (tempValid && temp > 35))) state_ = ALARM;
+    if (state_ == AUTO && ((requireDistance_ && distance > 0 && distance < 20) ||
+                          (requireTemp_ && tempValid && temp > 35))) state_ = ALARM;
     if (state_ == ALARM && !forcedAlarm_ && valid &&
-        distance >= 25 && temp <= 33) state_ = AUTO;
+        (!requireDistance_ || distance >= 25) && (!requireTemp_ || temp <= 33)) state_ = AUTO;
   }
   bool mode(uint8_t requested, uint32_t now) {
     if (requested > FAULT) return false;
@@ -44,6 +47,7 @@ class SystemCore {
   bool buzzer() const { return alarm(); }
   uint8_t servoDegrees() const { return state_ == ALARM ? 180 : 0; }
  private:
+  const bool requireDistance_, requireTemp_;
   State state_;
   bool forcedAlarm_, fault_, healthy_;
   uint32_t healthySince_, boot_;

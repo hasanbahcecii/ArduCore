@@ -8,15 +8,16 @@ no firmware was uploaded, and no electrical or actuator tests were performed.
 | HC-SR04 TRIG | D4 | Digital output, 2 us low + 10 us high trigger |
 | HC-SR04 ECHO | D6 / PD6 / PCINT22 | PCINT2 edge timing |
 | Active buzzer | D7 | Digital on/off; no tone timer |
-| SG90 servo | D9 | Servo library signal; 0 or 180 degree commands |
-| LM35 | A0 | Four synchronous ADC samples, nominal AVcc=5 V |
+| SG90 servo | D9 | Custom Timer1 OC1A PWM; logical 0/180 commands |
+| LM35 | A0 | Interrupt-driven four-sample burst, nominal AVcc=5 V |
 
-Ownership: Arduino Timer0 for timekeeping; Servo Timer1; custom USART0 RX/UDRE
+Ownership: Arduino Timer0 for timekeeping; custom Timer1 PWM; custom USART0 RX/UDRE
 interrupts for UART; PCINT2 for echo; watchdog reset mode for loop supervision.
 HardwareSerial must not be added alongside the custom UART driver.
 
-D9 maps to PB1/OC1A on Uno, but this release does not configure direct Timer1
-PWM. D5 must not be assumed to be the Timer1 input-capture pin. Current register
+D9 maps to PB1/OC1A on Uno. Timer1 is configured for mode 14, /8 and
+TOP=39999 (nominal 50 Hz); no Servo library or Timer1 ISR is used. D5 must not be assumed to be the Timer1 input-capture pin. ADC0 uses AVcc, /128 (125 kHz) and ADC_vect; its first conversion is
+discarded before a four-reading sum. Current register
 identifiers are checked against the ATmega328/P datasheet and Arduino Uno pin
 variant mapping; this does not verify physical wiring.
 
@@ -43,3 +44,8 @@ proven electrical disconnection.
 DHT11, stepper/ULN2003, joystick, potentiometer, LDR, IR, buttons, LEDs and LCD
 are possible future extensions. Their wiring is not integrated or verified;
 the LCD interface is unknown.
+
+Default servo pulses are 1000..2000 us and can be changed at compile time within
+500..2500 us; neither the defaults nor accepted bounds are physical calibration.
+Changing from v0.7's Servo library endpoints is intentional. See bench-testing.md
+for isolated profiles and the future measurement/connection sequence.

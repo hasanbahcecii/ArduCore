@@ -27,7 +27,7 @@
 extern uint8_t PIND, PCIFR, PCMSK2, PCICR;
 extern uint8_t UCSR0A, UCSR0B, UCSR0C, UBRR0H, UBRR0L, UDR0;
 extern uint32_t fakeMicros;
-extern int adcValue, pins[20], servoPosition, watchdogServices, triggerCount;
+extern int adcValue, pins[20], watchdogServices, triggerCount;
 inline uint32_t millis() { return fakeMicros / 1000; }
 inline uint32_t micros() { return fakeMicros; }
 inline void pinMode(uint8_t, uint8_t) {}
@@ -36,5 +36,32 @@ inline void digitalWrite(uint8_t pin, uint8_t value) {
   if (pin == 4 && value) ++triggerCount;
 }
 inline void delayMicroseconds(uint16_t amount) { fakeMicros += amount; }
-inline int analogRead(uint8_t) { return adcValue; }
+
+// Additional register symbols for compile-time driver fixtures.
+#define ADEN 7
+#define ADIE 3
+#define ADPS2 2
+#define ADPS1 1
+#define ADPS0 0
+#define ADSC 6
+#define ADIF 4
+#define PRADC 0
+#define REFS0 6
+#define ADC0D 0
+#define PB1 1
+#define DDB1 1
+#define ICF1 5
+#define OCF1B 2
+#define OCF1A 1
+#define TOV1 0
+#define COM1A1 7
+#define WGM11 1
+#define WGM13 4
+#define WGM12 3
+#define CS11 1
+extern uint8_t PRR, ADCSRA, ADCSRB, ADMUX, DIDR0;
+extern uint16_t ADC;
+extern uint8_t TCCR1A, TCCR1B, TIMSK1, PORTB, DDRB, TIFR1;
+extern uint16_t TCNT1, ICR1, OCR1A;
+
 #endif

@@ -1,72 +1,84 @@
-# v0.7 software validation
+# v0.8 software validation
 
-Date: 2026-11-08. No physical hardware test or firmware upload was performed.
-Historical v0.6 evidence is retained separately in baseline-validation.md.
+Date: 2026-11-08. No physical serial device was opened. No hardware test or
+firmware upload was performed. v0.7 and v0.6 evidence is preserved separately
+in v0.7-validation.md and baseline-validation.md; those are historical records.
 
-## Local Uno builds
+## Uno builds: all six profiles
 
-| Toolchain | Flash | Static SRAM | Result |
+CLI 1.5.1, AVR Core 1.8.6, arduino:avr:uno, --warnings all. No Servo library.
+
+| Profile | ID | Flash / 32256 bytes | Static SRAM / 2048 bytes |
 | --- | --- | --- | --- |
-| CLI 1.5.1, AVR Core 1.8.6, Servo 1.2.2 | 8498 / 32256 bytes | 796 / 2048 bytes | Passed |
-| CLI 1.5.1, AVR Core 1.8.8, Servo 1.3.0 | 8498 / 32256 bytes | 796 / 2048 bytes | Passed |
+| full | 0 | 8004 | 782 |
+| uart | 1 | 5792 | 759 |
+| distance | 2 | 7258 | 763 |
+| temperature | 3 | 6402 | 776 |
+| buzzer | 4 | 6110 | 759 |
+| servo | 5 | 6074 | 761 |
 
-The first row matches the workflow's pinned dependencies. Those packages were
-downloaded to an isolated workspace and checked against SHA-256 values from the
-Arduino package/library indices. The user's installed toolchain was unchanged.
-Builds use arduino:avr:uno and --warnings all. Four unused-parameter warnings
-originate in Arduino core new.cpp on a clean core build; application code emits
-no warnings. Static SRAM leaves 1252 bytes for stack/runtime use, but no measured
-stack bound or interrupt timing guarantee is claimed.
+All builds passed. Clean core builds emit four unused-parameter warnings in
+Arduino core new.cpp; application code emits no warnings. Full leaves 1266
+bytes for runtime/stack, which is not a measured stack bound. Full v0.7 used
+8498 bytes flash and 796 bytes static RAM with the same pinned AVR core.
 
-ELF inspection confirms separate echo, Servo, Timer0, USART RX and USART UDRE
-vectors, no linked HardwareSerial implementation, and the watchdog .init3 hook
-before data/BSS initialization. This checks generated structure, not hardware
-watchdog expiry or bootloader behavior.
+ELF symbols confirm no HardwareSerial, analogRead or Servo implementation.
+USART RX/UDRE remain owned by the custom driver. ADC_vect is present only in
+full/temperature and PCINT2 only in full/distance. No Timer1 compare ISR is
+linked; the output is hardware PWM. The previous watchdog initialization
+structure is retained. ELF inspection does not prove electrical behavior.
 
-## Native tests
+## Native firmware tests
 
-Run `tests/native/run.sh` with g++. Each suite is built with C++11, Wall, Wextra,
-Werror, pedantic and undefined-behavior sanitization with immediate failure.
-All five suites passed:
+Run `tests/native/run.sh`. C++11 with Wall/Wextra/Werror/pedantic and undefined
+behavior sanitizer (immediate failure) passes six suites plus five extra
+profile integration builds:
 
-1. Frame parser: all 65536 CMD/DATA combinations, delimiter payloads, malformed
-   frames, ETX/checksum gating, recovery, timeout and millisecond counter wrap.
-2. Echo/distance: ordered and duplicate edges, missing and late edges, one-time
-   consumption, completion age, delayed-result rejection, invalid pulse values,
-   reading expiry, recovery, microsecond and millisecond counter wrap.
-3. Core/temperature: startup grace, hot/cold alarm transitions, distance and
-   temperature hysteresis, forced alarm, neutral modes, fault latching, continuous
-   recovery interval, rejected modes, wrap, fractional average and validity bounds.
-4. Queue: 200000 deterministic push/pop/clear operations compared with std::deque,
-   plus exact capacity/overflow behavior for the non-power-of-two TX queue size.
-5. Firmware/UART integration: compile the actual sketch and UART driver against
-   fake peripherals; exercise startup, sensing, outputs, alarm, fault recovery,
-   RX timestamps, queue overflow, USART error recovery, RESET queue discard,
-   all-or-nothing TX, telemetry sentinels, maximum diagnostics and saturation.
+- Existing parser tests, including all 65536 CMD/DATA combinations.
+- Existing queue reference model (200000 operations), echo/freshness/wrap tests,
+  and system/fault/temperature tests.
+- ADC driver: configuration, first-result discard, four-sample sums, no early
+  publication, no overwrite of unread results, completion timestamps, full-scale
+  sums and single-consumption behavior, using simulated registers.
+- Timer1 driver: mode/prescaler/TOP, startup output, all 256 byte-valued angle
+  requests, clamping, ordered pulse endpoints and register writes.
+- The real sketch, ADC, PWM and UART driver code runs with fake peripherals in
+  full and each of the five isolated profiles. Tests check correct required
+  inputs, output masks, profile telemetry, unavailable disabled inputs, full
+  fault recovery and existing UART loss/reset behavior.
 
-Fake peripherals do not model interrupt preemption, ADC conversion timing,
-physical UART baud or servo pulses. Watchdog instructions are checked by the
-AVR build/ELF, not executed in the native fixture. Native tests are not a
-substitute for electrical and board tests.
+A separate calibrated native build with 1100..1900 us endpoints also passes.
+Compile-only negative checks reject profile=6, pulses below 500 or above 2500
+us, and reversed pulse limits.
+The fake environment does not simulate PWM edges, ADC analog sampling, AVR
+interrupt preemption or watchdog expiry. It deliberately provides no Servo
+library or analogRead stub, preventing accidental dependency reintroduction.
 
-## CI and repository checks
+## Python host tests
 
-The workflow runs the native runner before installing pinned dependencies and
-cross-compiling Uno. Remote CI has not been triggered or verified for these
-unpublished changes. Repository whitespace checks and ASCII text checks pass.
-No generated firmware, downloaded dependency, credentials or simulator output
-is included in the source tree. No push was performed.
+`python3 -m unittest discover -s tests/host -v` passes 11 tests with pyserial 3.5:
 
-## Remaining validation boundaries
+- All 65536 command/data frame encodings and invalid byte inputs.
+- Fragmented/multiple lines, banner, malformed JSON/nonfinite readings, legacy
+  telemetry, explicit profile validation and bounded oversized-line recovery.
+- Demo mode and append-only timestamped logs.
+- Argument validation, partial writes and disconnected serial transport errors.
+- Finite receive deadlines and persistent-console command parsing/quit.
+- CLI command encoding and explicit sent-without-acknowledgement reporting.
+- pyserial loop:// round trips entirely in process; no physical device involved.
 
-- Real sensor accuracy, false echoes, disconnection detection and AVcc calibration.
-- Servo endpoints, power integrity, startup transients and actuator mechanics.
-- Real-time interrupt stress, queue loss recovery and watchdog expiry on a board.
-- MCUSR visibility through the actual bootloader. The bundled Optiboot source
-  clears MCUSR before application entry; reset_flags may therefore be zero and
-  watchdog-based FAULT entry may be unavailable. Reset recovery is not certified.
-- Stack high-water use under simultaneous formatting and interrupts.
+Hardware access, auto-port selection, upload and real actuator sweeps are not
+part of these tests. The host demo generates clearly labeled synthetic data.
 
-Register-level servo PWM and asynchronous ADC are explicitly future driver work,
-not implemented parts of this reliability release. Protocol XOR cannot prevent
-accidental valid frames or authenticate commands.
+## CI and remaining boundaries
+
+Workflow now runs native and Python tests plus a six-profile pinned Uno build
+matrix. It no longer installs Servo. Remote CI for these unpublished changes
+has not run. Repository text is ASCII and whitespace checks pass; generated
+binaries, test caches and downloaded dependencies are not committed.
+
+Later execute bench-testing.md: verify ADC reference/accuracy and sensor noise,
+PWM timing/endpoints, serial DTR reset behavior, power/mechanics, actual UART
+interrupt stress and watchdog/bootloader interactions. A floating LM35 can
+still produce plausible data. The watchdog reset flag remains bootloader-
+dependent. Individual tests with reused cables do not replace full integration.

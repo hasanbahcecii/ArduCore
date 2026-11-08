@@ -1,4 +1,4 @@
-# UART protocol: v0.7
+# UART protocol: v0.8
 
 ## Wire format
 
@@ -52,15 +52,17 @@ per loop, so the control loop cannot be starved by unlimited host traffic.
 
 ## Device output
 
-Startup banner: `ArduCore v0.7 READY` followed by CRLF.
+Startup banner: `ArduCore v0.8 READY` followed by CRLF.
 
 JSON telemetry is requested every 500 ms and by GET_STATUS. Multiple requests
 in a single loop produce one line. One request also resets the periodic timer.
 
 ```json
-{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
+{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"profile":0,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
 ```
 
+- profile: compiled image ID (0 full, 1 UART, 2 distance, 3 temperature,
+  4 buzzer, 5 servo). This cannot be changed by a UART command.
 - state: current mode number; alarm is true in ALARM or FAULT.
 - dist: cm, -1.0 when unavailable/invalid or at least 300 ms old.
 - temp: C, -1.0 when unavailable/invalid or at least 750 ms old.
@@ -79,7 +81,10 @@ in a later successfully queued line. Flooding GET_STATUS may drop responses;
 there is no guaranteed per-command reply. At 9600 baud the nominal 500 ms output
 rate is below link capacity.
 
+For isolated profiles only enabled sensors participate in health and alarm
+rules. Disabled sensors remain -1.0; full still requires both sensors.
+
 Compatibility: the binary frame and original state/dist/temp/alarm keys remain.
-Added diagnostic keys, v0.7 banner, -1.0 invalid readings and FAULT alarm policy
+Added diagnostic keys, v0.8 banner, -1.0 invalid readings and FAULT alarm policy
 are intentional host-visible changes. Hosts must parse complete JSON lines and
 allow extra keys.

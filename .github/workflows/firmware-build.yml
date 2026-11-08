@@ -9,21 +9,35 @@ permissions:
   contents: read
 
 jobs:
+  software-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test native firmware and profiles
+        run: tests/native/run.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install host dependencies
+        run: python -m pip install -r tools/host/requirements.txt
+      - name: Test host with software transports only
+        run: python -m unittest discover -s tests/host -v
   uno:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [full, uart, distance, temperature, buzzer, servo]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Test native logic
-        run: tests/native/run.sh
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
         with:
           version: 1.5.1
-      - name: Install AVR core and Servo
+      - name: Install AVR core
         run: |
           arduino-cli core update-index
           arduino-cli core install arduino:avr@1.8.6
-          arduino-cli lib install "Servo@1.2.2"
-      - name: Compile Arduino Uno firmware
-        run: arduino-cli compile --fqbn arduino:avr:uno --warnings all firmware/arducore
+      - name: Compile Arduino Uno profile
+        run: tools/build_firmware.sh "${{ matrix.profile }}"

@@ -18,18 +18,21 @@ Local validation is documented in validation.md. No hardware test was performed.
 This does not certify sensor accuracy, actuator motion or watchdog/bootloader
 interaction. A floating LM35 can still produce plausible values.
 
-## Optional driver development: separate scope
+## v0.8 isolated bench preparation: implemented in software
 
-1. Replace Servo with Timer1 PWM after confirming pulse limits and actual servo
-   endpoints. Preserve Timer0 and check timer ownership. Physical validation is
-   needed before calling servo operation verified.
-2. Replace synchronous analogRead with asynchronous ADC sampling. Define AVcc
-   calibration and measurement/filtering policy. Determine whether disconnected
-   LM35 detection needs additional hardware.
-3. Validate watchdog expiry, startup outputs and reset cause reporting using the
-   actual board/bootloader. Select a reliable reset-cause mechanism if required.
+- Six compile-time profiles with full-system checks retained by default.
+- Python console, status/mode/reset commands, bounded telemetry decoder and JSONL logs.
+- ADC0 asynchronous burst acquisition; no analogRead dependency.
+- Timer1 OC1A hardware PWM; no Servo dependency, configurable pulse bounds.
+- Driver/register tests, all-profile integration tests, host tests and CI matrix.
+- Sequential hardware guide to reuse limited wiring, followed by full integration.
 
-These are peripheral architecture changes, not completed features of v0.7.
+## Next: deferred hardware validation
+
+Execute docs/bench-testing.md only in a later hardware session. Confirm PWM
+waveform/endpoints, ADC reference/accuracy, sensor-loss behavior, integrated power
+and watchdog/bootloader recovery. No connected device was accessed for v0.8.
+Separate tests do not replace a final all-components system test.
 
 ## Future portability and extensions
 

@@ -3,12 +3,18 @@
 #include <string>
 #include <stdio.h>
 uint8_t PIND, PCIFR, PCMSK2, PCICR, UCSR0A, UCSR0B, UCSR0C, UBRR0H, UBRR0L, UDR0;
+uint8_t PRR, ADCSRA, ADCSRB, ADMUX, DIDR0;
+uint16_t ADC;
+uint8_t TCCR1A, TCCR1B, TIMSK1, PORTB, DDRB, TIFR1;
+uint16_t TCNT1, ICR1, OCR1A;
 uint32_t fakeMicros = 0;
-int adcValue = 51, pins[20] = {}, servoPosition = -1, watchdogServices = 0, triggerCount = 0;
+int adcValue = 51, pins[20] = {}, watchdogServices = 0, triggerCount = 0;
 uint8_t resetFlags = 0;
 void startWatchdog() {}
 void serviceWatchdog() { ++watchdogServices; }
 #include "../../firmware/arducore/src/drivers/UartAvr.cpp"
+#include "../../firmware/arducore/src/drivers/AdcAvr.cpp"
+#include "../../firmware/arducore/src/drivers/ServoPwmAvr.cpp"
 #include "../../firmware/arducore/arducore.ino"
 
 static std::string drain() {
@@ -27,24 +33,38 @@ static void step(bool echo = true) {
   fakeMicros += 1000;
   const int previousTriggers = triggerCount;
   loop();
+#if ARDUCORE_DISTANCE
   if (echo && triggerCount != previousTriggers) {
     fakeMicros += 100;
     PIND = _BV(PD6); PCINT2_vect();
     fakeMicros += 2000; // About 34 cm.
     PIND = 0; PCINT2_vect();
   }
+#else
+  (void)echo; (void)previousTriggers;
+#endif
+#if ARDUCORE_TEMPERATURE
+  for (unsigned i = 0; ADCSRA & _BV(ADSC); ++i) {
+    assert(i < 6);
+    fakeMicros += 104;
+    ADC = adcValue;
+    ADCSRA &= ~_BV(ADSC);
+    ADC_vect();
+  }
+#endif
   drain();
 }
 static void run(unsigned steps, bool echo = true) { while (steps--) step(echo); }
 int main() {
   setup();
   assert(UBRR0L == 103 && UCSR0C == (_BV(UCSZ01) | _BV(UCSZ00)));
-  assert(drain() == "ArduCore v0.7 READY\r\n");
+  assert(drain() == "ArduCore v0.8 READY\r\n");
+#if ARDUCORE_PROFILE == 0
   run(1200);
-  assert(systemCore.state() == arduc::AUTO && !pins[7] && servoPosition == 0);
+  assert(systemCore.state() == arduc::AUTO && !pins[7] && OCR1A == servo_pwm::ticksForDegrees(0));
   adcValue = 90; // ~44 C.
   run(250);
-  assert(systemCore.state() == arduc::ALARM && pins[7] && servoPosition == 180);
+  assert(systemCore.state() == arduc::ALARM && pins[7] && OCR1A == servo_pwm::ticksForDegrees(180));
   run(100);
   assert(systemCore.state() == arduc::ALARM); // Healthy distance cannot clear hot alarm.
   adcValue = 51;
@@ -53,9 +73,9 @@ int main() {
   command(1, arduc::ALARM); step();
   assert(systemCore.state() == arduc::ALARM && pins[7]);
   command(1, arduc::MANUAL); step();
-  assert(systemCore.state() == arduc::MANUAL && !pins[7] && servoPosition == 0);
+  assert(systemCore.state() == arduc::MANUAL && !pins[7] && OCR1A == servo_pwm::ticksForDegrees(0));
   run(500, false);
-  assert(systemCore.state() == arduc::FAULT && pins[7] && servoPosition == 0);
+  assert(systemCore.state() == arduc::FAULT && pins[7] && OCR1A == servo_pwm::ticksForDegrees(0));
   command(255, 0); step(false);
   assert(systemCore.state() == arduc::FAULT);
   run(900);
@@ -108,11 +128,39 @@ int main() {
   resetFlags = UINT8_MAX;
   sendTelemetry(millis());
   const std::string longest = drain();
-  assert(!longest.empty() && longest.size() < 160);
+  assert(!longest.empty() && longest.size() < 176);
   assert(longest.find("65535") != std::string::npos);
   countSaturating(txDropped);
   assert(txDropped == UINT16_MAX);
   assert(telemetryTenths(25.29f) == 253);
   assert(watchdogServices > 1000);
+#else
+  run(1200);
+  assert(systemCore.state() == arduc::AUTO);
+  assert(((PCICR & _BV(PCIE2)) != 0) == static_cast<bool>(ARDUCORE_DISTANCE));
+  assert(((ADCSRA & _BV(ADEN)) != 0) == static_cast<bool>(ARDUCORE_TEMPERATURE));
+  assert(((TCCR1A & _BV(COM1A1)) != 0) == static_cast<bool>(ARDUCORE_SERVO));
+  sendTelemetry(millis());
+  const std::string initial = drain();
+  assert(initial.find("\"profile\":" + std::to_string(ARDUCORE_PROFILE)) != std::string::npos);
+  if (!ARDUCORE_DISTANCE) assert(initial.find("\"dist\":-1.0") != std::string::npos);
+  if (!ARDUCORE_TEMPERATURE) assert(initial.find("\"temp\":-1.0") != std::string::npos);
+  command(1, arduc::ALARM); step();
+  assert(systemCore.state() == arduc::ALARM);
+  assert(pins[7] == static_cast<int>(ARDUCORE_BUZZER));
+  if (ARDUCORE_SERVO) assert(OCR1A == servo_pwm::ticksForDegrees(180));
+  command(1, arduc::IDLE); step();
+  assert(!pins[7]);
+  if (ARDUCORE_SERVO) assert(OCR1A == servo_pwm::ticksForDegrees(0));
+#if ARDUCORE_DISTANCE || ARDUCORE_TEMPERATURE
+  command(1, arduc::AUTO); step();
+  adcValue = 0;
+  run(900, false);
+  assert(systemCore.state() == arduc::FAULT);
+#else
+  command(1, arduc::AUTO); run(900, false);
+  assert(systemCore.state() == arduc::AUTO); // No fabricated sensor inputs required.
+#endif
+#endif
   puts("Firmware and UART integration tests passed (simulated peripherals)");
 }

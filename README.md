@@ -4,18 +4,19 @@ Arduino Uno R3 / ATmega328P, 16 MHz embedded learning platform. HC-SR04 and
 LM35 readings drive an active buzzer and SG90 servo. A host sends binary UART
 commands and receives JSON lines. Future STM32 migration is a learning goal.
 
-## v0.7 software reliability release
+## v0.8 isolated testing and peripheral drivers
 
 This release repairs parsing, alarm transitions, sensor freshness, output
-consistency and communication overload handling. It adds a portable application
-core, native tests and a two-second watchdog. Hardware behavior has not been
-verified; this is not a production-readiness claim.
+consistency and communication overload handling. It retains the portable
+application core and watchdog, adds isolated build profiles and a Python host console, and
+replaces Servo/analogRead with register-level Timer1/ADC drivers. Hardware
+behavior has not been verified; this is not a production-readiness claim.
 
 - UART: register-level USART0 RX/TX interrupts, 9600 baud, 8N1.
 - Distance: pin-change ISR, atomic consumption, 30 ms echo deadline and 300 ms
   reading lifetime. Late/unmatched edges are ignored.
-- Temperature: four synchronous ADC readings every 200 ms; fractional average
-  preserved; nominal 5 V reference, application range (0,150] C, 750 ms lifetime.
+- Temperature: four interrupt-completed ADC readings per 200 ms request;
+  fractional average preserved; nominal 5 V reference, application range (0,150] C, 750 ms lifetime.
 - Telemetry: every 500 ms or on request; bounded whole-message TX queueing.
 - Control: alarm thresholds with hysteresis; latched FAULT and explicit recovery.
 - Watchdog: early disable, then two-second reset mode; fed after each full loop.
@@ -54,8 +55,9 @@ hardware-verified safety positions.
 | SG90 signal | D9 |
 | LM35 output | A0 |
 
-Timer0 remains Arduino timekeeping; Servo owns Timer1. Synchronous ADC and short
-trigger delays remain; the firmware is not fully non-blocking.
+Timer0 remains Arduino timekeeping. The custom driver owns Timer1 and drives
+D9/OC1A at nominal 50 Hz. ADC is asynchronous. Short ultrasonic trigger delays
+and formatting still run synchronously.
 
 ## Host protocol
 
@@ -68,23 +70,25 @@ and counted as rejected; no speed-controlled motor exists in this baseline.
 RESET is a logical recovery request, not an MCU reset. All frames are five bytes.
 
 ```json
-{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
+{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"profile":0,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
 ```
 
 Unavailable distance or temperature is -1.0. Original field names and binary
 framing remain; hosts must allow the added diagnostic fields. Startup emits
-`ArduCore v0.7 READY`. See the protocol document for recovery and overload rules.
+`ArduCore v0.8 READY`. See the protocol document for recovery and overload rules.
 
 ## Build and test
 
-Pinned build dependencies: Arduino CLI 1.5.1, AVR Core 1.8.6, Servo 1.2.2.
+Pinned build dependencies: Arduino CLI 1.5.1 and AVR Core 1.8.6. No Servo library.
 
 ```sh
 arduino-cli core update-index
 arduino-cli core install arduino:avr@1.8.6
-arduino-cli lib install "Servo@1.2.2"
-arduino-cli compile --fqbn arduino:avr:uno --warnings all firmware/arducore
+tools/build_firmware.sh full
 tests/native/run.sh
+python3 -m pip install -r tools/host/requirements.txt
+python3 -m unittest discover -s tests/host -v
+python3 tools/host/arducore_host.py --demo
 ```
 
 Native tests require a C++11 g++ compiler and include undefined-behavior checks.
@@ -101,6 +105,20 @@ calibration require measurement. Bootloaders can clear MCUSR before the sketch,
 so reset_flags is best-effort and zero does not prove a clean reset. A watchdog
 reset will not always be identifiable for FAULT entry through such bootloaders.
 
-Servo remains library-driven and ADC remains synchronous. Direct Timer1 PWM,
-asynchronous ADC, STM32 and additional devices are future work, described in
-the [roadmap](docs/roadmap.md). No license has been selected.
+Timer1 PWM uses configurable 1000..2000 us defaults, replacing the library's
+544..2400 us default range. Logical angles are not calibrated physical angles.
+STM32 and additional devices remain future work. See the [roadmap](docs/roadmap.md).
+No license has been selected.
+
+## Work with limited cables
+
+The default full build requires both sensors. Separate profiles allow one
+component at a time: `uart`, `distance`, `temperature`, `buzzer`, `servo`.
+Run `tools/build_firmware.sh <profile>` to compile without uploading. Every JSON
+line reports profile=0..5. Disabled sensors remain -1.0 and only the selected
+profile's sensors participate in fault/alarm decisions. Full's checks remain.
+
+See [staged hardware testing](docs/bench-testing.md) for wiring and expected
+observations, and the [host tool guide](docs/host-tool.md) for commands and logs.
+All hardware steps are deferred; the supplied software tests use fake peripherals
+and an in-process serial loopback only.

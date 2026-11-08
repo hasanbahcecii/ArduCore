@@ -1,5 +1,7 @@
-// ArduCore v0.7 - software reliability release; hardware validation pending.
-#include <Servo.h>
+// ArduCore v0.8 - software reliability release; hardware validation pending.
+#include "BuildConfig.h"
+#include "src/drivers/AdcAvr.h"
+#include "src/drivers/ServoPwmAvr.h"
 #include <stdio.h>
 #include <util/atomic.h>
 #include "FrameParser.h"
@@ -8,22 +10,24 @@
 #include "src/drivers/UartAvr.h"
 #include "src/drivers/WatchdogAvr.h"
 
-static const uint8_t TRIG_PIN = 4, ECHO_PIN = 6, BUZZER_PIN = 7, SERVO_PIN = 9;
+static const uint8_t TRIG_PIN = 4, ECHO_PIN = 6, BUZZER_PIN = 7;
 EchoCapture echoCapture;
 DistanceReading distanceReading;
 arduc::TemperatureReading temperature;
-arduc::SystemCore systemCore;
+arduc::SystemCore systemCore(ARDUCORE_DISTANCE, ARDUCORE_TEMPERATURE);
 FrameParser parser;
-Servo lockServo;
 uint32_t lastTrigger = 0, lastTempRead = 0, lastTelemetry = 0;
 uint16_t txDropped = 0, rejected = 0;
 bool statusRequested = false;
 
 void countSaturating(uint16_t &count) { if (count != UINT16_MAX) ++count; }
 
+#if ARDUCORE_DISTANCE
 ISR(PCINT2_vect) {
   echoCapture.edge((PIND & _BV(PD6)) != 0, micros());
 }
+
+#endif
 
 void triggerSensor() {
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { echoCapture.arm(micros()); }
@@ -41,18 +45,22 @@ void updateDistance() {
   if (ready) distanceReading.update(duration, millis() - age / 1000);
 }
 
-void updateTemperature(uint32_t now) {
-  uint16_t sum = 0;
-  for (uint8_t i = 0; i < 4; ++i) sum += analogRead(A0);
-  temperature.update(sum, now);
+void updateTemperature() {
+#if ARDUCORE_TEMPERATURE
+  adc::Sample sample;
+  if (adc::take(sample)) temperature.update(sample.sum, sample.time);
+#endif
 }
 
 void applyOutputs() {
+#if ARDUCORE_BUZZER
   digitalWrite(BUZZER_PIN, systemCore.buzzer() ? HIGH : LOW);
-  // Avoid rewriting the Servo command on every loop iteration.
+#endif
+#if ARDUCORE_SERVO
   static int16_t previous = -1;
   const uint8_t degrees = systemCore.servoDegrees();
-  if (previous != degrees) { lockServo.write(degrees); previous = degrees; }
+  if (previous != degrees) { servo_pwm::writeDegrees(degrees); previous = degrees; }
+#endif
 }
 
 void processCommand(uint8_t cmd, uint8_t data, uint32_t now) {
@@ -88,48 +96,64 @@ int16_t telemetryTenths(float value) {
 void sendTelemetry(uint32_t now) {
   const int16_t dist = telemetryTenths(distanceReading.value(now));
   const int16_t temp = telemetryTenths(temperature.value(now));
-  char line[160];
+  char line[176];
   const int length = snprintf(line, sizeof line,
       "{\"state\":%u,\"dist\":%d.%u,\"temp\":%d.%u,\"alarm\":%s,"
-      "\"rx_errors\":%u,\"tx_dropped\":%u,\"rejected\":%u,\"reset_flags\":%u}\r\n",
+      "\"profile\":%u,\"rx_errors\":%u,\"tx_dropped\":%u,\"rejected\":%u,\"reset_flags\":%u}\r\n",
       static_cast<unsigned>(systemCore.state()), dist / 10,
       static_cast<unsigned>(abs(dist % 10)), temp / 10,
       static_cast<unsigned>(abs(temp % 10)), systemCore.alarm() ? "true" : "false",
-      static_cast<unsigned>(uart::errors()), static_cast<unsigned>(txDropped),
+      static_cast<unsigned>(ARDUCORE_PROFILE), static_cast<unsigned>(uart::errors()), static_cast<unsigned>(txDropped),
       static_cast<unsigned>(rejected), static_cast<unsigned>(resetFlags));
   if (length < 0 || static_cast<size_t>(length) >= sizeof line ||
       !uart::send(line, static_cast<size_t>(length))) countSaturating(txDropped);
 }
 
 void setup() {
+#if ARDUCORE_DISTANCE
   pinMode(TRIG_PIN, OUTPUT);
   digitalWrite(TRIG_PIN, LOW);
   pinMode(ECHO_PIN, INPUT);
+#endif
+#if ARDUCORE_BUZZER
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  lockServo.attach(SERVO_PIN);
+#endif
+#if ARDUCORE_SERVO
+  servo_pwm::begin();
+#endif
+#if ARDUCORE_TEMPERATURE
+  adc::begin();
+#endif
   systemCore.begin(millis(), (resetFlags & _BV(WDRF)) != 0);
   applyOutputs();
+#if ARDUCORE_DISTANCE
   PCIFR = _BV(PCIF2);
   PCMSK2 = _BV(PCINT22);
   PCICR |= _BV(PCIE2);
+#endif
   uart::begin();
-  static const char banner[] = "ArduCore v0.7 READY\r\n";
+  static const char banner[] = "ArduCore v0.8 READY\r\n";
   uart::send(banner, sizeof banner - 1);
   startWatchdog();
 }
 
 void loop() {
   uint32_t now = millis();
+#if ARDUCORE_DISTANCE
   updateDistance();
   if (static_cast<uint32_t>(now - lastTrigger) >= 100) {
     lastTrigger = now;
     triggerSensor();
   }
+#endif
+  updateTemperature();
+#if ARDUCORE_TEMPERATURE
   if (static_cast<uint32_t>(now - lastTempRead) >= 200) {
     lastTempRead = now;
-    updateTemperature(now);
+    adc::request();
   }
+#endif
   // Refresh sensor health before commands, especially FAULT recovery requests.
   now = millis();
   systemCore.update(now, distanceReading.value(now), temperature.value(now), temperature.valid(now));
