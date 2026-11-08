@@ -1,0 +1,42 @@
+{
+  "kind": "simavr_instruction_soak",
+  "seed": 42517,
+  "requested_simulated_minutes": 60,
+  "simulated_seconds": 3601.299972875,
+  "wall_seconds": 632.514,
+  "assertions": 1620,
+  "telemetry_lines": 7742,
+  "final_telemetry": {
+    "state": 1,
+    "dist": 34.3,
+    "temp": 24.9,
+    "alarm": false,
+    "profile": 0,
+    "rx_errors": 0,
+    "tx_dropped": 2220,
+    "rejected": 60,
+    "reset_flags": 1
+  },
+  "metrics": {
+    "cycles": 57620799566,
+    "boots": 1,
+    "buzzer": 0,
+    "pulses": 180065,
+    "ocr1a": 2000,
+    "top": 39999,
+    "width_min": 16005,
+    "width_max": 32011,
+    "period_min": 319997,
+    "period_max": 320003,
+    "adc_triggers": 72025
+  },
+  "hardware_accessed": false,
+  "gpu_used": false,
+  "inputs": {
+    "firmware_elf_sha256": "2414c1e019e371fe00eb678d961a16794656fd53b65a4a5f46483f85988e02d4",
+    "soak_runner_sha256": "9de04fffe441e7c2be506c8d78f6d55ab9ba69a064612f3512a7b7dfe9133227",
+    "simavr_revision": "f44723e8c42431136d5b4de81f789ded56d7e8fa",
+    "physical_hardware": false,
+    "gpu": false
+  }
+}

@@ -1,0 +1,40 @@
+name: Build firmware bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Artifact version label (no Git tag or GitHub release is created)
+        required: true
+        default: v0.8.0
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.5.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned build core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.6
+      - name: Build all profiles and source manifest
+        env:
+          BUNDLE_VERSION: ${{ inputs.version }}
+        run: |
+          python tools/release/package.py --version "$BUNDLE_VERSION"
+          python tools/release/verify.py "build/releases/ArduCore-$BUNDLE_VERSION.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arducore-bundle
+          path: |
+            build/releases/*.zip
+            build/releases/*.sha256

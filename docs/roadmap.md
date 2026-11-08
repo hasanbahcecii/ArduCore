@@ -27,6 +27,17 @@ interaction. A floating LM35 can still produce plausible values.
 - Driver/register tests, all-profile integration tests, host tests and CI matrix.
 - Sequential hardware guide to reuse limited wiring, followed by full integration.
 
+## Hardware-free validation infrastructure: implemented
+
+- Production ELF instruction/peripheral tests under pinned headless simavr 1.8.
+- Real host CLI via Linux virtual serial port to simulated firmware, with logs.
+- Seeded accelerated stress scenarios and machine-readable summaries.
+- All-profile source/firmware bundles with source commit and SHA-256 verification.
+- CPU-only CI simulation and manual downloadable bundle workflow.
+
+See simulation.md and release.md. These add verification around unchanged v0.8
+firmware; the banner remains v0.8. Real hardware coverage remains separate.
+
 ## Next: deferred hardware validation
 
 Execute docs/bench-testing.md only in a later hardware session. Confirm PWM

@@ -82,3 +82,46 @@ PWM timing/endpoints, serial DTR reset behavior, power/mechanics, actual UART
 interrupt stress and watchdog/bootloader interactions. A floating LM35 can
 still produce plausible data. The watchdog reset flag remains bootloader-
 dependent. Individual tests with reused cables do not replace full integration.
+
+## Additional headless instruction and host validation
+
+The production v0.8 ELF (unchanged firmware) also passes six simavr 1.8 tests:
+ADC/echo acquisition, malformed frame recovery, USART framing-error recovery,
+UART mode changes with stable PWM pin measurements, sensor FAULT/recovery, and
+watchdog reset after a simulator-only PC lockup. Simulator source is pinned to
+f44723e8c42431136d5b4de81f789ded56d7e8fa. Tests load no Uno bootloader.
+
+Measured stable servo pulses are within 2 us of nominal 1000/2000 us, and
+periods within 2 us of 20000 us in simulated pin events. A targeted watchdog
+probe reset approximately 2.048 simulated seconds after the injected lockup.
+The bridge maintains monotonic elapsed time across simavr's reset-local cycle
+counter and excludes cross-reset pin intervals from timing comparisons.
+These are model results, not oscilloscope or board measurements.
+
+One end-to-end test passes with the actual Python CLI, pyserial and a Linux
+pseudo-terminal connected to the loaded ELF. It covers commands, telemetry,
+refused/accepted recovery and JSONL persistence. A partially flushed startup
+banner is allowed only before the first complete telemetry line; malformed
+output after synchronization fails the test.
+
+Six bundle-integrity tests pass: valid package, outer/payload tampering,
+unmanifested/unsafe members, missing profiles/artifacts, and dirty-source rules.
+Development package builds for all six profiles were verified against a complete
+manifest and archive checksum. Final bundles identify their committed source.
+See simulation.md and release.md for repeatable commands and limitations.
+
+## Accelerated one-hour stress result
+
+Completed 60 simulated minutes plus startup (3601.299973 simulated seconds)
+in 632.514 wall-clock seconds, seed 42517. All 1620 checks passed and 7742
+telemetry lines were decoded by the actual host parser. There was one initial
+boot and no unexpected reset; paced UART RX errors remained zero.
+
+The status flood deliberately skipped 2220 whole telemetry messages under TX
+backpressure, with no partial JSON delivered. The 60 rejected recovery requests
+were expected while the echo sensor was unavailable. Final state was AUTO with
+valid readings. 180065 PWM pulses and 72025 ADC trigger events were captured.
+
+The machine-readable result and input hashes are in
+[evidence/soak-60m.json](evidence/soak-60m.json). This is an accelerated model test,
+not a physical or one-hour wall-clock burn-in. No GPU or physical port was used.

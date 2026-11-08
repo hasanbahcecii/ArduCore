@@ -122,3 +122,15 @@ See [staged hardware testing](docs/bench-testing.md) for wiring and expected
 observations, and the [host tool guide](docs/host-tool.md) for commands and logs.
 All hardware steps are deferred; the supplied software tests use fake peripherals
 and an in-process serial loopback only.
+
+## Hardware-free instruction and end-to-end tests
+
+The production Uno ELF can run in pinned simavr 1.8, without a GPU or physical
+serial port. Tests measure simulated ADC/echo, PWM pin events and watchdog reset,
+and connect the real host CLI over a Linux PTY. A seeded accelerated soak
+exercises alarms, loss/recovery, malformed traffic and TX backpressure.
+See [simulation](docs/simulation.md) for setup and exact limitations.
+
+[Bundle preparation](docs/release.md) builds all six profile HEX/ELF images with
+a source-commit manifest and SHA-256 verification. It does not upload or publish
+a GitHub release. Hardware validation remains deferred.
