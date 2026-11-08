@@ -134,3 +134,8 @@ See [simulation](docs/simulation.md) for setup and exact limitations.
 [Bundle preparation](docs/release.md) builds all six profile HEX/ELF images with
 a source-commit manifest and SHA-256 verification. It does not upload or publish
 a GitHub release. Hardware validation remains deferred.
+
+All six profile ELF images now have instruction-level scenario coverage, with
+[observed SRAM/stack results](docs/memory.md) and a regression headroom budget.
+The [bench assistant](docs/bench-assistant.md) prepares component-by-component
+testing and records results; physical validation is still pending.

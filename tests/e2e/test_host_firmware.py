@@ -21,7 +21,9 @@ ELF = os.environ.get("ARDUCORE_SIM_ELF")
 
 
 class VirtualPort:
-    def __init__(self):
+    def __init__(self, runner=None, elf=None):
+        self.runner, self.elf = runner or RUNNER, elf or ELF
+        self.received = bytearray()
         self.master, self.slave = pty.openpty()
         tty.setraw(self.slave)
         self.path = os.ttyname(self.slave)
@@ -40,7 +42,7 @@ class VirtualPort:
 
     def run(self):
         try:
-            with Device(RUNNER, ELF) as device:
+            with Device(self.runner, self.elf) as device:
                 while not self.stop.is_set():
                     try:
                         command, completed = self.jobs.get_nowait()
@@ -51,6 +53,7 @@ class VirtualPort:
                     if select.select([self.master], [], [], 0.02)[0]:
                         wire = os.read(self.master, 128)
                         if wire:
+                            self.received.extend(wire)
                             self.deliver(device.exchange("rx " + wire.hex())[0])
                     self.deliver(device.run(0.02))
         except BaseException as exc:

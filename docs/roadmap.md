@@ -38,6 +38,16 @@ interaction. A floating LM35 can still produce plausible values.
 See simulation.md and release.md. These add verification around unchanged v0.8
 firmware; the banner remains v0.8. Real hardware coverage remains separate.
 
+## All-profile coverage and bench assistance: implemented
+
+- Actual ELF scenarios across all six profiles with required-input/output checks.
+- Instruction-boundary stack observation and unused-SRAM watermark, with a
+  512-byte observed-gap CI budget (not an exhaustive upper-bound proof).
+- Profile-aware bench helper, explicit output sequencing, JSON/JSONL reports.
+- All-profile simulated helper tests and real pyserial through virtual ports.
+
+See memory.md and bench-assistant.md. No physical device was accessed.
+
 ## Next: deferred hardware validation
 
 Execute docs/bench-testing.md only in a later hardware session. Confirm PWM

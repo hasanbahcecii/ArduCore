@@ -125,3 +125,23 @@ valid readings. 180065 PWM pulses and 72025 ADC trigger events were captured.
 The machine-readable result and input hashes are in
 [evidence/soak-60m.json](evidence/soak-60m.json). This is an accelerated model test,
 not a physical or one-hour wall-clock burn-in. No GPU or physical port was used.
+
+## All-profile instruction coverage and observed memory
+
+All six profile ELF images pass the scenario matrix in
+[evidence/profile-matrix.json](evidence/profile-matrix.json). Required sensor
+rules, disabled interrupts/output pins, modes, thresholds, loss/recovery,
+framing errors and telemetry backpressure are checked on actual AVR instructions.
+Observed stack peaks are 298 (full), 284 (uart), 289 (distance), 284 (temperature),
+284 (buzzer) and 284 (servo) bytes. The minimum observed free gap is 968 bytes;
+all profiles exceed the 512-byte CI regression budget. Watermark spans agree
+with committed-SP minima in these runs. See memory.md for method and limits.
+These are tested-path results, not an exhaustive stack upper bound.
+
+The profile-aware bench CLI passes all six simulated profiles. Seven unit cases
+cover wrong-profile refusal, explicit output permission, failure cleanup,
+required-input failure, profile-change revocation and argument/report handling.
+Two additional real-pyserial-over-PTY end-to-end cases verify the UART bench
+sequence and zero command bytes on an image/profile mismatch. The existing
+six AVR tests and original full-system host end-to-end test also pass with the
+memory-observing runner. No physical serial device was opened.

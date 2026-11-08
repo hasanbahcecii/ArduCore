@@ -117,3 +117,9 @@ ARDUCORE_SERVO_MIN_US=1100 ARDUCORE_SERVO_MAX_US=1900 tools/build_firmware.sh se
 The compiler enforces ordered limits within 500..2500 us; that accepted software
 range is not a claim that every such pulse is suitable for the real mechanism.
 No automatic sweep or actuator command runs on the host without user action.
+
+## Optional automated assistant
+
+[bench-assistant.md](bench-assistant.md) describes a profile-aware serial helper
+that records the sequence and leaves manual physical checks pending. It can
+already be exercised on all six simulator profiles without connecting a board.

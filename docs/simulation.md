@@ -86,3 +86,20 @@ this paced simulator run is not evidence of loss-free overload beyond line rate.
 Sources: [simavr upstream](https://github.com/buserror/simavr/tree/v1.8), including
 its UART/ADC/pin APIs. simavr is GPL-3.0 licensed and is built as an external
 headless test dependency; its GUI examples are not built or linked.
+
+## All-profile coverage and SRAM observation
+
+Build each profile under build/profiles/<name>, set ARDUCORE_SIM_ELF_DIR to
+that parent directory and ARDUCORE_SIM_ELF to its full/arducore.ino.elf. Then:
+
+```sh
+python3 tests/simulation/profile_matrix.py --runner "$ARDUCORE_SIM_RUNNER" --elf-dir "$ARDUCORE_SIM_ELF_DIR" --report build/profile-matrix.json
+python3 tests/simulation/bench_matrix.py --runner "$ARDUCORE_SIM_RUNNER" --elf-dir "$ARDUCORE_SIM_ELF_DIR" --report-dir build/bench-matrix
+```
+
+The profile matrix checks all six real ELF images, sensor requirements and
+disabled pins/interrupts, thresholds, FAULT recovery and communication load.
+It also records stack-pointer minima and SRAM watermark observations. See
+[memory measurement](memory.md) for the 512-byte observed-headroom budget and
+limits, and [bench assistant](bench-assistant.md) for the future serial helper.
+No simulator result certifies electrical or mechanical behavior.

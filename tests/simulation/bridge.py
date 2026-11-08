@@ -22,8 +22,12 @@ class Device:
         self.records = []
         self.raw = bytearray()
         deadline = time.monotonic() + 10
-        while self.line(deadline) != "READY":
-            pass
+        try:
+            while self.line(deadline) != "READY":
+                pass
+        except BaseException:
+            self.close()
+            raise
 
     def line(self, deadline):
         while b"\n" not in self.pending:
@@ -50,6 +54,8 @@ class Device:
                 break
             if line.startswith("TX "):
                 received.extend(bytes.fromhex(line[3:]))
+            elif line.startswith("MEMORY "):
+                metrics = json.loads(line[7:])
             elif line.startswith("METRICS "):
                 metrics = json.loads(line[8:])
             else:
@@ -71,6 +77,9 @@ class Device:
     def metrics(self):
         return self.exchange("metrics")[1]
 
+    def memory(self):
+        return self.exchange("memory")[1]
+
     def latest(self):
         if not self.records:
             raise AssertionError("No telemetry from firmware")
@@ -83,7 +92,8 @@ class Device:
                 self.process.stdin.flush()
                 self.process.wait(timeout=3)
             except (OSError, subprocess.TimeoutExpired):
-                self.process.kill()
+                if self.process.poll() is None:
+                    self.process.kill()
                 self.process.wait(timeout=3)
         self.process.stdin.close()
         self.process.stdout.close()

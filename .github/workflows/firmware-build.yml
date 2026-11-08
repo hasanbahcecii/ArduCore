@@ -24,6 +24,7 @@ jobs:
         run: |
           python -m unittest discover -s tests/host -v
           python -m unittest discover -s tests/release -v
+          python -m unittest discover -s tests/bench -v
   uno:
     runs-on: ubuntu-latest
     strategy:
@@ -50,7 +51,8 @@ jobs:
       - name: Configure simulation paths on the runner
         run: |
           echo "ARDUCORE_SIM_RUNNER=$RUNNER_TEMP/arducore-sim" >> "$GITHUB_ENV"
-          echo "ARDUCORE_SIM_ELF=$RUNNER_TEMP/arducore-uno/arducore.ino.elf" >> "$GITHUB_ENV"
+          echo "ARDUCORE_SIM_ELF_DIR=$RUNNER_TEMP/arducore-profiles" >> "$GITHUB_ENV"
+          echo "ARDUCORE_SIM_ELF=$RUNNER_TEMP/arducore-profiles/full/arducore.ino.elf" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -66,17 +68,26 @@ jobs:
           arduino-cli core install arduino:avr@1.8.6
       - name: Build production ELF and pinned simulator
         run: |
-          tools/build_firmware.sh full --build-path "$RUNNER_TEMP/arducore-uno"
+          for profile in full uart distance temperature buzzer servo; do
+            tools/build_firmware.sh "$profile" --build-path "$RUNNER_TEMP/arducore-profiles/$profile"
+          done
           tools/simulation/setup_simavr.sh "$RUNNER_TEMP/simavr"
           tools/simulation/build_runner.sh "$RUNNER_TEMP/simavr" "$ARDUCORE_SIM_RUNNER"
       - name: Test actual AVR instructions and virtual serial end-to-end
         run: |
           python -m unittest discover -s tests/simulation -v
           python -m unittest discover -s tests/e2e -v
+      - name: Test all profile ELF images and observe SRAM headroom
+        run: |
+          python tests/simulation/profile_matrix.py --runner "$ARDUCORE_SIM_RUNNER" --elf-dir "$ARDUCORE_SIM_ELF_DIR" --report "$RUNNER_TEMP/profile-matrix.json"
+          python tests/simulation/bench_matrix.py --runner "$ARDUCORE_SIM_RUNNER" --elf-dir "$ARDUCORE_SIM_ELF_DIR" --report-dir "$RUNNER_TEMP/bench-results"
       - name: Short deterministic stress check
         run: |
           python tests/simulation/soak.py --runner "$ARDUCORE_SIM_RUNNER" --elf "$ARDUCORE_SIM_ELF" --minutes 1 --report "$RUNNER_TEMP/soak.json"
       - uses: actions/upload-artifact@v4
         with:
           name: simulator-soak
-          path: ${{ runner.temp }}/soak.json
+          path: |
+            ${{ runner.temp }}/soak.json
+            ${{ runner.temp }}/profile-matrix.json
+            ${{ runner.temp }}/bench-results
