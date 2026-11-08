@@ -1,42 +1,45 @@
-# Hardware
+# Hardware and peripheral ownership
 
-## Baseline wiring
+Target: Arduino Uno R3, ATmega328P at 16 MHz. No attached hardware was accessed,
+no firmware was uploaded, and no electrical or actuator tests were performed.
 
-| Component | Arduino pin | Use in uploaded sketch |
+| Component | Uno pin | Current implementation |
 | --- | --- | --- |
-| HC-SR04 TRIG | D4 | Output; short trigger pulse |
-| HC-SR04 ECHO | D6 | Input; pin-change edge timing |
-| Active buzzer | D7 | Digital on/off |
-| SG90 servo | D9 | Servo library output |
-| LM35 | A0 | ADC temperature input |
+| HC-SR04 TRIG | D4 | Digital output, 2 us low + 10 us high trigger |
+| HC-SR04 ECHO | D6 / PD6 / PCINT22 | PCINT2 edge timing |
+| Active buzzer | D7 | Digital on/off; no tone timer |
+| SG90 servo | D9 | Servo library signal; 0 or 180 degree commands |
+| LM35 | A0 | Four synchronous ADC samples, nominal AVcc=5 V |
 
-The sketch uses PIND/PD6, PCIE2, PCMSK2, and PCINT22 for the echo path.
-The proposed register mapping D6 -> PD6/PCINT22 and future D9 -> PB1/OC1A
-requires independent ATmega328P datasheet and Uno schematic confirmation.
-No datasheet verification was performed during this documentation update.
+Ownership: Arduino Timer0 for timekeeping; Servo Timer1; custom USART0 RX/UDRE
+interrupts for UART; PCINT2 for echo; watchdog reset mode for loop supervision.
+HardwareSerial must not be added alongside the custom UART driver.
 
-D5 is not documented as a Timer1 input-capture input. Do not copy the earlier
-draft's proposed D5 input-capture assignment into a hardware implementation
-without checking the actual ICP1 pin mapping.
+D9 maps to PB1/OC1A on Uno, but this release does not configure direct Timer1
+PWM. D5 must not be assumed to be the Timer1 input-capture pin. Current register
+identifiers are checked against the ATmega328/P datasheet and Arduino Uno pin
+variant mapping; this does not verify physical wiring.
 
-## Timers and interrupts
+Sources:
+- [ATmega328/P datasheet](https://docs.arduino.cc/resources/datasheets/Atmel-42735-8-bit-AVR-Microcontroller-ATmega328-328P_Datasheet.pdf)
+- [Arduino standard AVR pin variant](https://github.com/arduino/ArduinoCore-avr/blob/1.8.6/variants/standard/pins_arduino.h)
+- [avr-libc watchdog initialization](https://avrdudes.github.io/avr-libc/avr-libc-user-manual/group__avr__watchdog.html)
 
-Servo currently owns Timer1. Future direct Timer1 PWM requires removing that
-dependency and checking all timer users. HardwareSerial owns USART interrupt
-handlers. Arduino timing APIs conventionally depend on Timer0.
+FAULT commands buzzer on and servo 0 degrees. IDLE/MANUAL/AUTO command neutral
+outputs; ALARM commands buzzer on and servo 180 degrees. Mechanical meaning,
+servo endpoints, power supply, startup transients and SG90 integrated behavior
+remain unverified. Servo commands are not proof of position feedback.
 
-The buzzer is active and driven digitally; no timer-driven tone or PWM is
-implemented. D9 carries the servo signal, not a DC motor output.
+LM35 plausibility accepts a four-sample sum from 1 through 1227 (approximately
+above 0 through 150 C). Grounded/zero and above-range values are invalid. Actual
+0 C operation is outside this application policy. A disconnected analog input
+can float into the accepted range; a dedicated detection circuit or biasing
+and calibration policy may be necessary for reliable disconnect detection.
 
-## Additional hardware
+HC-SR04 absence/no echo becomes unavailable data. An absent echo may also be
+caused by target geometry; FAULT indicates unavailable measurement, not a
+proven electrical disconnection.
 
-DHT11, a ULN2003-driven stepper, joystick, potentiometer, LDR, IR receiver,
-buttons, LEDs, and an LCD are available candidates. Their integration and
-wiring are not verified. The LCD interface is unknown; do not assume I2C.
-PIR and DC motor features from the earlier draft are not in the baseline.
-
-## Validation status
-
-No Arduino board is connected to this environment. Electrical connections,
-power integrity, sensor accuracy, timing, and actuator movement have not been
-tested here. Integrated servo behavior remains an explicit validation task.
+DHT11, stepper/ULN2003, joystick, potentiometer, LDR, IR, buttons, LEDs and LCD
+are possible future extensions. Their wiring is not integrated or verified;
+the LCD interface is unknown.

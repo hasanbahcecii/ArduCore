@@ -1,70 +1,85 @@
-# UART protocol: v0.6
+# UART protocol: v0.7
 
-## Transport and framing
+## Wire format
 
-HardwareSerial runs at 9600 baud with its default 8N1 configuration.
-
-```text
-Byte 0: STX       0x02
-Byte 1: CMD       command identifier
-Byte 2: DATA      one byte
-Byte 3: CHECKSUM  CMD XOR DATA
-Byte 4: ETX       0x03
-```
-
-Frames are always five bytes. There is no LEN byte, variable-length payload,
-sequence number, or acknowledgement.
-
-## Commands
-
-| Command | Identifier | DATA interpretation | Effect |
-| --- | --- | --- | --- |
-| SET_MODE | 0x01 | 0..4 | Assigns the corresponding state |
-| SET_SPEED | 0x02 | Unused | No command handler |
-| GET_STATUS | 0x03 | Ignored | Sends JSON telemetry |
-| RESET | 0xFF | Ignored | AUTO; alarm false; buzzer low; servo 0 |
-
-State values are IDLE=0, AUTO=1, MANUAL=2, ALARM=3, FAULT=4.
-Invalid mode values are ignored. Unknown commands have no effect.
-RESET does not reset the MCU, parser, sensor history, or scheduling timestamps.
-Subsequent state-machine execution can re-enter ALARM.
-
-Example GET_STATUS frame, in hexadecimal:
+9600 baud, asynchronous 8N1, USART0. Every host command is five bytes:
 
 ```text
-02 03 00 03 03
+[STX 02][CMD][DATA][CMD XOR DATA][ETX 03]
 ```
 
-## MCU-to-host output
+There is no length, escaping, sequence number or acknowledgement. All byte
+values, including 02 and 03, are legal in CMD/DATA/checksum positions.
 
-A startup banner precedes normal telemetry:
+| CMD | Name | DATA and effect |
+| --- | --- | --- |
+| 01 | SET_MODE | 0 IDLE, 1 AUTO, 2 MANUAL, 3 ALARM, 4 FAULT |
+| 02 | SET_SPEED | Unsupported, increments rejected |
+| 03 | GET_STATUS | DATA ignored; requests a current JSON line |
+| FF | RESET | DATA ignored; logical AUTO/recovery request |
 
-```text
-ArduCore v0.6 READY
-```
+Unknown commands, invalid mode values and refused fault recovery increment
+rejected. Bad framing/checksum has no command effect. Mode numbers are stable.
 
-JSON lines end with CRLF and are sent approximately every 500 ms and on
-GET_STATUS. Only these fields exist:
+MANUAL has neutral outputs and no actuator command. Explicit ALARM is held
+until another accepted mode/reset request. FAULT latches; only AUTO or RESET
+after 500 ms continuous sensor validity releases it. RESET preserves sensor
+history, fault latch when unhealthy, diagnostics and scheduling timestamps.
+It resets the parser and discards pending RX bytes, including following frames
+already queued in that batch. It does not reboot the MCU. Control rules execute
+before outputs/telemetry, so unsafe inputs can immediately re-enter ALARM.
+
+GET_STATUS example: `02 03 00 03 03` (hex).
+
+## Validation and recovery
+
+The parser scans a sliding five-byte window and dispatches only after checksum
+and ETX validation. It finds the next complete valid frame after malformed
+input without interpreting delimiter bytes inside payload as unconditional
+restarts. Successful dispatch clears the window. An inter-byte gap >=100 ms
+clears an incomplete window. Timestamps come from the RX ISR, not dequeue time.
+
+Checksum XOR and unescaped delimiters cannot provide authentication or eliminate
+accidental valid frames in arbitrary noise. There is no exact delivery guarantee
+or duplicate suppression in this protocol.
+
+The RX queue has 63 usable entries. Overflow or USART framing/overrun/parity
+error increments rx_errors (saturating at 65535), drops subsequent bytes until
+main-loop recovery, flushes queued RX and clears the parser. The host should
+retry a complete command after overload has ceased. Frames pending at loss
+can be discarded, including otherwise valid ones. At most 16 bytes are handled
+per loop, so the control loop cannot be starved by unlimited host traffic.
+
+## Device output
+
+Startup banner: `ArduCore v0.7 READY` followed by CRLF.
+
+JSON telemetry is requested every 500 ms and by GET_STATUS. Multiple requests
+in a single loop produce one line. One request also resets the periodic timer.
 
 ```json
-{"state":1,"dist":34.0,"temp":26.4,"alarm":false}
+{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
 ```
 
-dist is stored distance in cm, temp is the computed temperature in C,
-and alarm is the software flag. Initial values can be zero and values can be
-stale. There are no ldr or speed fields and no validity or age fields.
+- state: current mode number; alarm is true in ALARM or FAULT.
+- dist: cm, -1.0 when unavailable/invalid or at least 300 ms old.
+- temp: C, -1.0 when unavailable/invalid or at least 750 ms old.
+- rx_errors: detected receive loss/error events, not a count of bad-checksum frames.
+- tx_dropped: complete output messages skipped for insufficient TX space.
+- rejected: unsupported commands, invalid modes or refused recovery requests.
+- reset_flags: raw MCUSR observed before C++ initialization, best-effort only.
 
-## Parser limitations
+Numeric readings round to one decimal. Diagnostic counters saturate at 65535
+and survive logical RESET, but reset with the MCU. MCUSR may already have been
+cleared by the bootloader; reset_flags=0 means unknown, not confirmed power-on.
 
-The parser processes a command immediately after a matching checksum,
-before reading ETX. A valid checksum can therefore cause side effects even
-when ETX is missing or invalid.
+TX has 191 usable bytes. Each line queues whole or is skipped; it never blocks
+waiting for room and never enqueues a partial line. tx_dropped becomes visible
+in a later successfully queued line. Flooding GET_STATUS may drop responses;
+there is no guaranteed per-command reply. At 9600 baud the nominal 500 ms output
+rate is below link capacity.
 
-After checksum handling, the parser waits indefinitely for ETX. It has no
-frame timeout, explicit reset on a malformed terminator, or STX-based
-resynchronization in that stage. The 64-byte software ring has 63 usable
-slots and silently discards incoming bytes when full. It is filled from
-the main loop through HardwareSerial, not directly by a custom USART ISR.
-
-Malformed frames, interrupted frames, checksum errors, overflow, recovery,
-and command ordering need tests before parser changes.
+Compatibility: the binary frame and original state/dist/temp/alarm keys remain.
+Added diagnostic keys, v0.7 banner, -1.0 invalid readings and FAULT alarm policy
+are intentional host-visible changes. Hosts must parse complete JSON lines and
+allow extra keys.

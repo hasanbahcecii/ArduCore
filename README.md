@@ -1,129 +1,106 @@
 # ArduCore
 
-ArduCore is an embedded systems learning platform based on Arduino Uno R3
-(ATmega328P, 16 MHz) and the Arduino AVR Core. It communicates with a host
-computer through a binary UART command protocol and JSON telemetry.
+Arduino Uno R3 / ATmega328P, 16 MHz embedded learning platform. HC-SR04 and
+LM35 readings drive an active buzzer and SG90 servo. A host sends binary UART
+commands and receives JSON lines. Future STM32 migration is a learning goal.
 
-## Engineering objectives
+## v0.7 software reliability release
 
-Develop register-level drivers, reliable communication, sensor validation,
-fault recovery, and a hardware-independent application core, with a future
-STM32 migration. These are development goals, not production-readiness claims.
+This release repairs parsing, alarm transitions, sensor freshness, output
+consistency and communication overload handling. It adds a portable application
+core, native tests and a two-second watchdog. Hardware behavior has not been
+verified; this is not a production-readiness claim.
 
-## Current implementation: v0.6
+- UART: register-level USART0 RX/TX interrupts, 9600 baud, 8N1.
+- Distance: pin-change ISR, atomic consumption, 30 ms echo deadline and 300 ms
+  reading lifetime. Late/unmatched edges are ignored.
+- Temperature: four synchronous ADC readings every 200 ms; fractional average
+  preserved; nominal 5 V reference, application range (0,150] C, 750 ms lifetime.
+- Telemetry: every 500 ms or on request; bounded whole-message TX queueing.
+- Control: alarm thresholds with hysteresis; latched FAULT and explicit recovery.
+- Watchdog: early disable, then two-second reset mode; fed after each full loop.
 
-The reviewed source is the supplied `arducore.ino`. It implements HC-SR04
-measurement using a pin-change ISR, LM35 sampling, buzzer and Servo control,
-a state machine, UART parsing, and periodic telemetry.
+See [architecture](docs/architecture.md), [protocol](docs/protocol.md),
+[hardware](docs/hardware.md) and [validation](docs/validation.md).
 
-The firmware combines interrupts and millis-based scheduling with synchronous
-Arduino APIs. It is not fully interrupt-driven or fully non-blocking:
-ADC reads, short microsecond delays, and serial output can block.
+## Modes and outputs
 
-The authoritative sketch is included at `firmware/arducore/arducore.ino`.
-Only non-ASCII comment decorations were converted to ASCII. Executable source
-is unchanged. Arduino Uno cross-compilation passed with Arduino CLI 1.5.1,
-Arduino AVR Core 1.8.6, and Servo 1.2.2: 6226 bytes flash, 343 bytes static RAM.
-Physical hardware behavior has not been verified in this environment;
-integrated servo operation remains unverified. Native unit tests do not yet
-exist. The GitHub Actions workflow runs the same pinned build on pushes and
-pull requests. See [baseline validation](docs/validation.md).
+| Value | Mode | Buzzer | Servo command |
+| --- | --- | --- | --- |
+| 0 | IDLE | Off | 0 degrees |
+| 1 | AUTO | Off | 0 degrees |
+| 2 | MANUAL | Off | 0 degrees; manual actuator control is not implemented |
+| 3 | ALARM | On | 180 degrees |
+| 4 | FAULT | On | 0 degrees |
 
-## Architecture
+Boot requests AUTO unless the application can observe the watchdog reset flag.
+An automatic alarm enters below 20 cm or above 35 C, and clears only with both
+valid readings, distance >=25 cm and temperature <=33 C. A host-requested ALARM
+stays active until another accepted mode or RESET command.
 
-```text
-Host computer <--- UART ---> Arduino Uno
-                              |-- HC-SR04
-                              |-- LM35
-                              |-- Active buzzer
-                              +-- SG90 servo
-```
+After a one-second startup grace, missing/invalid sensor data latches FAULT in
+active modes. IDLE permits missing sensors until another active mode is selected.
+FAULT remains latched even after readings recover. RESET or SET_MODE AUTO can
+release it only after 500 ms of continuously valid readings. Other mode requests
+cannot bypass a latched fault. Output choices are application policy, not
+hardware-verified safety positions.
 
-The current implementation is a single sketch. See
-[architecture](docs/architecture.md) for current execution and planned modules.
+## Wiring
 
-## State machine
+| Component | Uno pin |
+| --- | --- |
+| HC-SR04 TRIG / ECHO | D4 / D6 |
+| Active buzzer | D7 |
+| SG90 signal | D9 |
+| LM35 output | A0 |
 
-| Value | State | Current behavior |
-| --- | --- | --- |
-| 0 | IDLE | Buzzer low; servo commanded to 0 degrees |
-| 1 | AUTO | Boot state; evaluates distance and temperature thresholds |
-| 2 | MANUAL | Empty handler; planned |
-| 3 | ALARM | Buzzer high; servo commanded to 180 degrees |
-| 4 | FAULT | Empty handler; planned |
+Timer0 remains Arduino timekeeping; Servo owns Timer1. Synchronous ADC and short
+trigger delays remain; the firmware is not fully non-blocking.
 
-AUTO enters ALARM for a valid stored distance below 20 cm or temperature above
-35 C. ALARM exits when stored distance exceeds 20 cm, regardless of temperature.
-Transitions and hysteresis require validation. IDLE does not clear the alarm
-flag; MANUAL and FAULT do not define safe output behavior.
-
-## UART protocol
-
-9600 baud using Arduino HardwareSerial (default 8N1).
+## Host protocol
 
 ```text
-[STX 0x02][CMD][DATA][CHECKSUM][ETX 0x03]
-CHECKSUM = CMD XOR DATA
+[02][CMD][DATA][CMD XOR DATA][03]
 ```
 
-There is no LEN field. Every command has one DATA byte.
-
-| Command | Value | Current behavior |
-| --- | --- | --- |
-| SET_MODE | 0x01 | Accepts state values 0 through 4 |
-| SET_SPEED | 0x02 | Identifier defined; no handler |
-| GET_STATUS | 0x03 | Sends telemetry |
-| RESET | 0xFF | Returns to AUTO; clears alarm; buzzer low; servo 0 |
-
-Telemetry is sent approximately every 500 ms and on GET_STATUS:
+SET_MODE=01 (DATA 0..4), GET_STATUS=03, RESET=FF. SET_SPEED=02 is unsupported
+and counted as rejected; no speed-controlled motor exists in this baseline.
+RESET is a logical recovery request, not an MCU reset. All frames are five bytes.
 
 ```json
-{"state":1,"dist":34.0,"temp":26.4,"alarm":false}
+{"state":1,"dist":34.3,"temp":25.4,"alarm":false,"rx_errors":0,"tx_dropped":0,"rejected":0,"reset_flags":0}
 ```
 
-Startup also emits the plain-text line `ArduCore v0.6 READY`.
-See [protocol](docs/protocol.md) for parser limitations.
+Unavailable distance or temperature is -1.0. Original field names and binary
+framing remain; hosts must allow the added diagnostic fields. Startup emits
+`ArduCore v0.7 READY`. See the protocol document for recovery and overload rules.
 
-## Hardware pin mapping
+## Build and test
 
-| Component | Arduino pin | Current use |
-| --- | --- | --- |
-| HC-SR04 TRIG | D4 | GPIO output |
-| HC-SR04 ECHO | D6 | Pin-change interrupt |
-| Active buzzer | D7 | Digital output |
-| SG90 servo | D9 | Servo library signal |
-| LM35 | A0 | Synchronous ADC input |
-
-Additional devices are future candidates, not integrated features.
-See [hardware](docs/hardware.md) for timer ownership and mapping caveats.
-
-## Firmware build instructions
-
-Use Arduino CLI 1.5.1 to build the included sketch for Arduino Uno:
+Pinned build dependencies: Arduino CLI 1.5.1, AVR Core 1.8.6, Servo 1.2.2.
 
 ```sh
 arduino-cli core update-index
 arduino-cli core install arduino:avr@1.8.6
 arduino-cli lib install "Servo@1.2.2"
-arduino-cli compile --fqbn arduino:avr:uno firmware/arducore
+arduino-cli compile --fqbn arduino:avr:uno --warnings all firmware/arducore
+tests/native/run.sh
 ```
 
-The workflow at `.github/workflows/firmware-build.yml` installs the same CLI,
-core, and Servo versions. A successful cross-build does not establish hardware
-correctness. No license has been selected yet; this repository does not grant
-an open-source license.
+Native tests require a C++11 g++ compiler and include undefined-behavior checks.
+They test protocol framing, state/fault behavior, sensor expiry, timer wrap,
+queue behavior, and firmware/UART integration using simulated peripherals.
+GitHub Actions runs native tests and the pinned Uno build. A local pass does
+not establish remote CI status or electrical behavior.
 
-## Known limitations
+## Remaining boundaries
 
-Sensor disconnect handling, atomic ISR data access, ultrasonic timeout and
-stale-data handling, alarm transitions, parser recovery, and buffer overflow
-reporting need work. HardwareSerial owns USART interrupts; Servo owns Timer1.
-MANUAL, FAULT, motor speed control, and watchdog recovery are incomplete or
-absent. See [architecture](docs/architecture.md).
+A floating LM35 input may produce plausible readings; software cannot reliably
+prove that it is disconnected. AVcc, analog accuracy, noise and servo pulse
+calibration require measurement. Bootloaders can clear MCUSR before the sketch,
+so reset_flags is best-effort and zero does not prove a clean reset. A watchdog
+reset will not always be identifiable for FAULT entry through such bootloaders.
 
-## Roadmap and STM32 migration
-
-See the [versioned roadmap](docs/roadmap.md). Preserve the UART protocol while
-introducing AVR drivers incrementally. Separate portable state and protocol
-logic from MCU-specific peripherals before migrating to STM32; peripheral
-assignments depend on the eventual board.
+Servo remains library-driven and ADC remains synchronous. Direct Timer1 PWM,
+asynchronous ADC, STM32 and additional devices are future work, described in
+the [roadmap](docs/roadmap.md). No license has been selected.

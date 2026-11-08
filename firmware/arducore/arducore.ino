@@ -1,43 +1,32 @@
-// ArduCore v0.6 - HC-SR04 + LM35 + Buzzer + Servo
-
+// ArduCore v0.7 - software reliability release; hardware validation pending.
 #include <Servo.h>
+#include <stdio.h>
+#include <util/atomic.h>
+#include "FrameParser.h"
+#include "EchoCapture.h"
+#include "src/core/SystemCore.h"
+#include "src/drivers/UartAvr.h"
+#include "src/drivers/WatchdogAvr.h"
 
-// --- STATE ---------------------------------------
-typedef enum {
-  STATE_IDLE,
-  STATE_AUTO,
-  STATE_MANUAL,
-  STATE_ALARM,
-  STATE_FAULT
-} SystemState;
+static const uint8_t TRIG_PIN = 4, ECHO_PIN = 6, BUZZER_PIN = 7, SERVO_PIN = 9;
+EchoCapture echoCapture;
+DistanceReading distanceReading;
+arduc::TemperatureReading temperature;
+arduc::SystemCore systemCore;
+FrameParser parser;
+Servo lockServo;
+uint32_t lastTrigger = 0, lastTempRead = 0, lastTelemetry = 0;
+uint16_t txDropped = 0, rejected = 0;
+bool statusRequested = false;
 
-volatile SystemState currentState = STATE_AUTO;
-
-// --- HC-SR04 -------------------------------------
-#define TRIG_PIN       4
-#define ECHO_PIN       6
-#define ALARM_DISTANCE 20.0f
-
-volatile uint32_t echoStart    = 0;
-volatile uint32_t echoDuration = 0;
-volatile bool     echoReady    = false;
-
-uint32_t lastTrigger = 0;
-#define TRIGGER_INTERVAL 100
-
-float lastDist   = 0.0f;
-bool  alarmState = false;
+void countSaturating(uint16_t &count) { if (count != UINT16_MAX) ++count; }
 
 ISR(PCINT2_vect) {
-  if (PIND & (1 << PD6)) {
-    echoStart = micros();
-  } else {
-    echoDuration = micros() - echoStart;
-    echoReady    = true;
-  }
+  echoCapture.edge((PIND & _BV(PD6)) != 0, micros());
 }
 
 void triggerSensor() {
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { echoCapture.arm(micros()); }
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -45,202 +34,112 @@ void triggerSensor() {
   digitalWrite(TRIG_PIN, LOW);
 }
 
-float readDistance() {
-  if (!echoReady) return -1.0f;
-  echoReady = false;
-  return (echoDuration * 0.0343f) / 2.0f;
+void updateDistance() {
+  uint32_t duration = 0, age = 0;
+  bool ready;
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { ready = echoCapture.take(micros(), duration, age); }
+  if (ready) distanceReading.update(duration, millis() - age / 1000);
 }
 
-// --- LM35 ----------------------------------------
-#define LM35_PIN   A0
-#define TEMP_ALARM 35.0f
-
-float lastTemp = 0.0f;
-
-float readTemp() {
-  int32_t sum = 0;
-  for (uint8_t i = 0; i < 4; i++) {
-    sum += analogRead(LM35_PIN);
-    delayMicroseconds(100);
-  }
-  return ((sum / 4) * 5000.0f / 1023.0f) / 10.0f;
+void updateTemperature(uint32_t now) {
+  uint16_t sum = 0;
+  for (uint8_t i = 0; i < 4; ++i) sum += analogRead(A0);
+  temperature.update(sum, now);
 }
 
-// --- BUZZER --------------------------------------
-#define BUZZER_PIN 7
-
-// --- SERVO ---------------------------------------
-#define SERVO_PIN 9
-Servo lockServo;
-
-// --- UART PROTOCOL -------------------------------
-#define STX      0x02
-#define ETX      0x03
-#define BUF_SIZE 64
-
-volatile uint8_t rxBuf[BUF_SIZE];
-volatile uint8_t rxHead = 0;
-volatile uint8_t rxTail = 0;
-
-#define CMD_SET_MODE   0x01
-#define CMD_SET_SPEED  0x02
-#define CMD_GET_STATUS 0x03
-#define CMD_RESET      0xFF
-
-// --- TIMERS --------------------------------------
-uint32_t lastTelemetry = 0;
-uint32_t lastTempRead  = 0;
-#define TELEMETRY_INTERVAL 500
-#define TEMP_INTERVAL      200
-
-// --- RING BUFFER ---------------------------------
-void bufWrite(uint8_t byte) {
-  uint8_t next = (rxHead + 1) % BUF_SIZE;
-  if (next != rxTail) {
-    rxBuf[rxHead] = byte;
-    rxHead = next;
-  }
+void applyOutputs() {
+  digitalWrite(BUZZER_PIN, systemCore.buzzer() ? HIGH : LOW);
+  // Avoid rewriting the Servo command on every loop iteration.
+  static int16_t previous = -1;
+  const uint8_t degrees = systemCore.servoDegrees();
+  if (previous != degrees) { lockServo.write(degrees); previous = degrees; }
 }
 
-int16_t bufRead() {
-  if (rxHead == rxTail) return -1;
-  uint8_t byte = rxBuf[rxTail];
-  rxTail = (rxTail + 1) % BUF_SIZE;
-  return byte;
-}
-
-// --- FORWARD DECLARATION -------------------------
-void sendTelemetry();
-
-// --- COMMAND HANDLER -----------------------------
-void processCommand(uint8_t cmd, uint8_t data) {
+void processCommand(uint8_t cmd, uint8_t data, uint32_t now) {
   switch (cmd) {
-    case CMD_SET_MODE:
-      if (data < 5) currentState = (SystemState)data;
+    case 0x01:
+      if (!systemCore.mode(data, now)) countSaturating(rejected);
       break;
-    case CMD_RESET:
-      currentState = STATE_AUTO;
-      alarmState   = false;
-      digitalWrite(BUZZER_PIN, LOW);
-      lockServo.write(0);
+    case 0x03: statusRequested = true; break;
+    case 0xFF:
+      if (!systemCore.reset(now)) countSaturating(rejected);
+      parser.reset();
+      uart::discardRx(); // RESET is a boundary: queued commands are discarded.
       break;
-    case CMD_GET_STATUS:
-      sendTelemetry();
-      break;
+    default: countSaturating(rejected); break; // Includes unsupported SET_SPEED.
   }
 }
 
-// --- FRAME PARSER --------------------------------
-void parseBuffer() {
-  static uint8_t stage    = 0;
-  static uint8_t cmd      = 0;
-  static uint8_t data     = 0;
-  static uint8_t checksum = 0;
-
-  int16_t b;
-  while ((b = bufRead()) != -1) {
-    switch (stage) {
-      case 0: if (b == STX) stage = 1; break;
-      case 1: cmd = b; checksum = b; stage = 2; break;
-      case 2: data = b; checksum ^= b; stage = 3; break;
-      case 3:
-        if (checksum == b) processCommand(cmd, data);
-        stage = 4; break;
-      case 4: if (b == ETX) stage = 0; break;
-    }
+void receiveCommands(uint32_t now) {
+  // Bounded work prevents RX traffic from starving sensing and watchdog service.
+  for (uint8_t i = 0; i < 16; ++i) {
+    if (uart::recover()) parser.reset();
+    uart::Received item;
+    if (!uart::read(item)) break;
+    uint8_t cmd, data;
+    if (parser.feed(item.byte, item.time, cmd, data)) processCommand(cmd, data, now);
   }
 }
 
-// --- TELEMETRY -----------------------------------
-void sendTelemetry() {
-  Serial.print(F("{\"state\":"));
-  Serial.print(currentState);
-  Serial.print(F(",\"dist\":"));
-  Serial.print(lastDist, 1);
-  Serial.print(F(",\"temp\":"));
-  Serial.print(lastTemp, 1);
-  Serial.print(F(",\"alarm\":"));
-  Serial.print(alarmState ? F("true") : F("false"));
-  Serial.print(F("}\r\n"));
+int16_t telemetryTenths(float value) {
+  return value >= 0 ? static_cast<int16_t>(value * 10 + 0.5f) : -10;
 }
 
-// --- STATE MACHINE -------------------------------
-void runStateMachine() {
-  switch (currentState) {
-    case STATE_IDLE:
-      digitalWrite(BUZZER_PIN, LOW);
-      lockServo.write(0);
-      break;
-    case STATE_AUTO:
-      if ((lastDist > 0.0f && lastDist < ALARM_DISTANCE) ||
-           lastTemp > TEMP_ALARM) {
-        alarmState   = true;
-        currentState = STATE_ALARM;
-      }
-      break;
-    case STATE_MANUAL:
-      break;
-    case STATE_ALARM:
-      digitalWrite(BUZZER_PIN, HIGH);
-      lockServo.write(180);
-      if (lastDist > ALARM_DISTANCE) {
-        alarmState   = false;
-        currentState = STATE_AUTO;
-        digitalWrite(BUZZER_PIN, LOW);
-        lockServo.write(0);
-      }
-      break;
-    case STATE_FAULT:
-      break;
-  }
+void sendTelemetry(uint32_t now) {
+  const int16_t dist = telemetryTenths(distanceReading.value(now));
+  const int16_t temp = telemetryTenths(temperature.value(now));
+  char line[160];
+  const int length = snprintf(line, sizeof line,
+      "{\"state\":%u,\"dist\":%d.%u,\"temp\":%d.%u,\"alarm\":%s,"
+      "\"rx_errors\":%u,\"tx_dropped\":%u,\"rejected\":%u,\"reset_flags\":%u}\r\n",
+      static_cast<unsigned>(systemCore.state()), dist / 10,
+      static_cast<unsigned>(abs(dist % 10)), temp / 10,
+      static_cast<unsigned>(abs(temp % 10)), systemCore.alarm() ? "true" : "false",
+      static_cast<unsigned>(uart::errors()), static_cast<unsigned>(txDropped),
+      static_cast<unsigned>(rejected), static_cast<unsigned>(resetFlags));
+  if (length < 0 || static_cast<size_t>(length) >= sizeof line ||
+      !uart::send(line, static_cast<size_t>(length))) countSaturating(txDropped);
 }
 
-// --- SETUP ---------------------------------------
 void setup() {
-  Serial.begin(9600);
-  pinMode(TRIG_PIN,   OUTPUT);
-  pinMode(ECHO_PIN,   INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  digitalWrite(TRIG_PIN, LOW);
+  pinMode(ECHO_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-
   lockServo.attach(SERVO_PIN);
-  lockServo.write(0);
-
-  // PCINT22 = D6 -> PCIE2
-  PCICR  |= (1 << PCIE2);
-  PCMSK2 |= (1 << PCINT22);
-  sei();
-
-  Serial.println(F("ArduCore v0.6 READY"));
+  systemCore.begin(millis(), (resetFlags & _BV(WDRF)) != 0);
+  applyOutputs();
+  PCIFR = _BV(PCIF2);
+  PCMSK2 = _BV(PCINT22);
+  PCICR |= _BV(PCIE2);
+  uart::begin();
+  static const char banner[] = "ArduCore v0.7 READY\r\n";
+  uart::send(banner, sizeof banner - 1);
+  startWatchdog();
 }
 
-// --- LOOP ----------------------------------------
 void loop() {
-  while (Serial.available()) {
-    bufWrite((uint8_t)Serial.read());
-  }
-
-  parseBuffer();
-
   uint32_t now = millis();
-
-  if (now - lastTrigger >= TRIGGER_INTERVAL) {
+  updateDistance();
+  if (static_cast<uint32_t>(now - lastTrigger) >= 100) {
     lastTrigger = now;
     triggerSensor();
   }
-
-  float d = readDistance();
-  if (d > 0.0f && d < 400.0f) lastDist = d;
-
-  if (now - lastTempRead >= TEMP_INTERVAL) {
+  if (static_cast<uint32_t>(now - lastTempRead) >= 200) {
     lastTempRead = now;
-    lastTemp = readTemp();
+    updateTemperature(now);
   }
-
-  runStateMachine();
-
-  if (now - lastTelemetry >= TELEMETRY_INTERVAL) {
+  // Refresh sensor health before commands, especially FAULT recovery requests.
+  now = millis();
+  systemCore.update(now, distanceReading.value(now), temperature.value(now), temperature.valid(now));
+  receiveCommands(now);
+  systemCore.update(now, distanceReading.value(now), temperature.value(now), temperature.valid(now));
+  applyOutputs();
+  if (statusRequested || static_cast<uint32_t>(now - lastTelemetry) >= 500) {
+    statusRequested = false; // Multiple status requests in one loop are coalesced.
     lastTelemetry = now;
-    sendTelemetry();
+    sendTelemetry(now);
   }
+  serviceWatchdog(); // Only after sensing, parsing and outputs have progressed.
 }
